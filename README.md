@@ -141,6 +141,9 @@ Sync Withings body weight measurements to Garmin Connect from a GitHub Actions w
    Uploaded: 2026-02-28T19:00:03+01:00 -> 75.237 kg
    Sync complete. Uploaded=2, Skipped=0
    ```
+ - <a href="./docs/images/garmin_connect.jpeg">
+      <img src="./docs/images/garmin_connect.jpeg" alt="Withings Developer Dashboard" width="200" height="400" />
+   </a>
 7. Store those as GitHub repository secrets. After that, scheduled workflow runs can authenticate without interactive MFA.
 
 ## Notes
