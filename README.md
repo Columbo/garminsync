@@ -160,3 +160,55 @@ Sync Withings body weight measurements to Garmin Connect from a GitHub Actions w
 - The sync is designed to stay idempotent: duplicate Garmin entries are skipped instead of failing the whole run.
 - Local runs and CI use the same environment variables so testing locally is close to the workflow behavior.
 - When multiple measurements exist on the same day, the script prefers the earliest entry that includes body-composition data and falls back to weight-only if needed.
+
+## Optional: Automatic Secret Rotation In GitHub Actions
+
+If you want GitHub Actions to automatically update rotated Withings tokens, create an additional repository secret named `REPO_SECRETS_TOKEN`.
+
+### What it is used for
+
+- The workflow can refresh `WITHINGS_ACCESS_TOKEN` and `WITHINGS_REFRESH_TOKEN` during a run.
+- GitHub Actions does not write those new values back to repository secrets automatically.
+- `REPO_SECRETS_TOKEN` is used by the workflow to call the GitHub API (via `gh secret set`) and update those repository secrets after a successful refresh.
+
+### How to create the token
+
+Create a fine-grained personal access token in GitHub:
+
+1. Open your GitHub account settings.
+2. Go to `Developer settings`.
+3. Go to `Personal access tokens`.
+4. Open `Fine-grained tokens`.
+5. Click `Generate new token`.
+
+Recommended settings:
+
+- `Token name`: `repo-secrets-rotation`
+- `Resource owner`: your GitHub account
+- `Repository access`: `Only select repositories`
+- Select this repository
+- `Expiration`: choose a reasonable expiry
+- `Repository permissions`:
+  - `Secrets`: `Read and write`
+
+GitHub only shows the token value once, so copy it when it is created.
+
+### Where to store it
+
+Store the token as a repository secret:
+
+1. Open this repository on GitHub.
+2. Go to `Settings`.
+3. Open `Secrets and variables`.
+4. Open `Actions`.
+5. Click `New repository secret`.
+6. Create:
+   - `Name`: `REPO_SECRETS_TOKEN`
+   - `Secret`: paste the fine-grained personal access token
+
+### Security note
+
+- This token can update repository secrets, so keep its scope narrow.
+- Limit it to this repository only.
+- Only grant the `Secrets` permission required for this use case.
+- Use an expiration date you are comfortable rotating later.
