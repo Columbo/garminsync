@@ -52,6 +52,15 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _export_github_env(name: str, value: str) -> None:
+    github_env = os.getenv("GITHUB_ENV")
+    if not github_env:
+        return
+
+    with open(github_env, "a", encoding="utf-8") as env_file:
+        env_file.write(f"{name}<<EOF\n{value}\nEOF\n")
+
+
 def refresh_withings_access_token(
     client_id: str, client_secret: str, refresh_token: str
 ) -> dict:
@@ -263,8 +272,12 @@ def main() -> int:
 
     if refreshed_access_token != withings_access_token:
         print("Withings access token was refreshed.")
+        _export_github_env("WITHINGS_ACCESS_TOKEN_UPDATED", "true")
+        _export_github_env("WITHINGS_ACCESS_TOKEN_NEXT", refreshed_access_token)
     if refreshed_refresh_token != withings_refresh_token:
         print("Withings refresh token was refreshed. Update your GitHub secret WITHINGS_REFRESH_TOKEN.")
+        _export_github_env("WITHINGS_REFRESH_TOKEN_UPDATED", "true")
+        _export_github_env("WITHINGS_REFRESH_TOKEN_NEXT", refreshed_refresh_token)
 
     start_date = dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(days=lookback_days)
     entries = list(_iter_unique_by_timestamp(fetch_withings_weight_entries(refreshed_access_token, start_date)))

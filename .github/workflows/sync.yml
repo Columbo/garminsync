@@ -9,6 +9,8 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,3 +35,34 @@ jobs:
           WITHINGS_REFRESH_TOKEN: ${{ secrets.WITHINGS_REFRESH_TOKEN }}
           LOOKBACK_DAYS: ${{ vars.LOOKBACK_DAYS || '7' }}
         run: python sync_withings_to_garmin.py
+
+      - name: Persist rotated Withings tokens to repository secrets
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.REPO_SECRETS_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          WITHINGS_ACCESS_TOKEN_UPDATED: ${{ env.WITHINGS_ACCESS_TOKEN_UPDATED }}
+          WITHINGS_ACCESS_TOKEN_NEXT: ${{ env.WITHINGS_ACCESS_TOKEN_NEXT }}
+          WITHINGS_REFRESH_TOKEN_UPDATED: ${{ env.WITHINGS_REFRESH_TOKEN_UPDATED }}
+          WITHINGS_REFRESH_TOKEN_NEXT: ${{ env.WITHINGS_REFRESH_TOKEN_NEXT }}
+        shell: bash
+        run: |
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "REPO_SECRETS_TOKEN is not configured; skipping secret update."
+            exit 0
+          fi
+
+          if [[ "${WITHINGS_ACCESS_TOKEN_UPDATED}" != "true" && "${WITHINGS_REFRESH_TOKEN_UPDATED}" != "true" ]]; then
+            echo "No rotated Withings tokens to persist."
+            exit 0
+          fi
+
+          if [[ "${WITHINGS_ACCESS_TOKEN_UPDATED}" == "true" ]]; then
+            gh secret set WITHINGS_ACCESS_TOKEN --body "${WITHINGS_ACCESS_TOKEN_NEXT}" --repo "${GH_REPO}"
+            echo "Updated repository secret WITHINGS_ACCESS_TOKEN."
+          fi
+
+          if [[ "${WITHINGS_REFRESH_TOKEN_UPDATED}" == "true" ]]; then
+            gh secret set WITHINGS_REFRESH_TOKEN --body "${WITHINGS_REFRESH_TOKEN_NEXT}" --repo "${GH_REPO}"
+            echo "Updated repository secret WITHINGS_REFRESH_TOKEN."
+          fi
