@@ -151,3 +151,12 @@ Sync Withings body weight measurements to Garmin Connect from a GitHub Actions w
 - This implementation syncs weight for the last 7 days by default.
 - If Garmin session secrets are missing, the script falls back to `GARMIN_EMAIL` and `GARMIN_PASSWORD` login.
 - GitHub Actions cannot persist refreshed Withings tokens unless you update secrets. For durable operation, rotate secrets with newly refreshed tokens periodically, or run this somewhere with persistent storage.
+
+## Design Notes
+
+- The sync is built to run unattended from GitHub Actions, so authentication is based on reusable secrets rather than interactive login during scheduled runs.
+- Withings access tokens are refreshed at runtime to reduce manual maintenance, while the refreshed values can still be rotated back into GitHub secrets when needed.
+- Garmin authentication is handled through reusable `garth` session tokens so MFA is only needed during the initial bootstrap step.
+- The sync is designed to stay idempotent: duplicate Garmin entries are skipped instead of failing the whole run.
+- Local runs and CI use the same environment variables so testing locally is close to the workflow behavior.
+- When multiple measurements exist on the same day, the script prefers the earliest entry that includes body-composition data and falls back to weight-only if needed.
