@@ -7,7 +7,7 @@ Sync Withings body weight measurements to Garmin Connect from a GitHub Actions w
 - Authenticates to Withings API
 - Fetches recent weight measurements
 - Authenticates to Garmin via `garth`
-- Uploads ome weight measurement to Garmin Connect
+- Uploads one weight measurement to Garmin Connect
   - prefers, per day, the earliest entry that has body-composition metrics, and only falls back to the earliest weight-only entry if none with composition exists.
 
 ## Project layout
