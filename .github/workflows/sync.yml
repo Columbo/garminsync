@@ -27,6 +27,7 @@ jobs:
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GARTH_TOKEN: ${{ secrets.GARTH_TOKEN }}
           GARTH_OAUTH1_TOKEN_JSON: ${{ secrets.GARTH_OAUTH1_TOKEN_JSON }}
           GARTH_OAUTH2_TOKEN_JSON: ${{ secrets.GARTH_OAUTH2_TOKEN_JSON }}
           WITHINGS_CLIENT_ID: ${{ secrets.WITHINGS_CLIENT_ID }}
