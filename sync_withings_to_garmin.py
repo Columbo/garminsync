@@ -265,15 +265,13 @@ def _login_garmin_with_credentials() -> None:
     )
 
 
-def _restore_garmin_session(*, prefer_saved_session: bool = True) -> None:
+def _restore_garmin_session() -> None:
     _clear_garmin_session_state()
 
-    if prefer_saved_session and _resume_garmin_session_from_env():
+    if _resume_garmin_session_from_env():
         return
     if _garmin_credentials_available():
         _login_garmin_with_credentials()
-        return
-    if not prefer_saved_session and _resume_garmin_session_from_env():
         return
 
     raise RuntimeError(
@@ -306,7 +304,6 @@ def _with_garmin_reauth_retry(action_name: str, func: Callable[[], T]) -> T:
                 raise
 
             status_code = _status_code_from_exception(exc)
-            prefer_saved_session = attempt == 1 or status_code == 429
             backoff_seconds = _retry_after_seconds(exc)
             if backoff_seconds is None:
                 backoff_seconds = min(max_delay, base_delay * (2 ** (attempt - 1)))
@@ -318,7 +315,7 @@ def _with_garmin_reauth_retry(action_name: str, func: Callable[[], T]) -> T:
                 f"Retrying in {backoff_seconds:.1f}s."
             )
             time.sleep(backoff_seconds)
-            _restore_garmin_session(prefer_saved_session=prefer_saved_session)
+            _restore_garmin_session()
 
     raise RuntimeError(f"Garmin retry loop exhausted unexpectedly during {action_name}")
 
@@ -383,7 +380,7 @@ def upload_body_composition_fit_to_garmin(entry: WeightEntry) -> None:
 
 
 def login_garmin() -> None:
-    _restore_garmin_session(prefer_saved_session=True)
+    _restore_garmin_session()
 
 
 def main() -> int:

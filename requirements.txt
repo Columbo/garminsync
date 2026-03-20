@@ -1,2 +1,2 @@
-garth==0.7.9
+garth @ git+https://github.com/matin/garth.git@f950306cbcf214b09d864082593a10fd1af6f1d6
 requests>=2.31.0
