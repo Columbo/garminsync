@@ -1,2 +1,2 @@
-garth>=0.5.2
+garth==0.6.3
 requests>=2.31.0
