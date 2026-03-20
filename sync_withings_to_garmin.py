@@ -3,14 +3,20 @@ import io
 import os
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+# garth 0.7+ enables telemetry by default during import. Keep CI quiet
+# and deterministic unless the caller explicitly opts in.
+os.environ.setdefault("GARTH_TELEMETRY_ENABLED", "false")
+os.environ.setdefault("GARTH_TELEMETRY_SEND_TO_LOGFIRE", "false")
 
 import garth
 import requests
-from garth.exc import GarthHTTPError
+from garth.exc import GarthException, GarthHTTPError
 from requests import HTTPError
 
 try:
@@ -21,6 +27,7 @@ except ImportError:
 
 WITHINGS_OAUTH_TOKEN_URL = "https://wbsapi.withings.net/v2/oauth2"
 WITHINGS_MEASURE_URL = "https://wbsapi.withings.net/measure"
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -50,6 +57,20 @@ def _required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return float(value)
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return int(value)
 
 
 def _export_github_env(name: str, value: str) -> None:
@@ -175,6 +196,133 @@ def _iter_first_entry_per_local_day(entries: Iterable[WeightEntry]) -> Iterable[
         yield first_with_composition_by_day.get(day, first_any_by_day[day])
 
 
+def _status_code_from_exception(exc: BaseException) -> int | None:
+    if isinstance(exc, GarthHTTPError) and exc.error.response is not None:
+        return exc.error.response.status_code
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return exc.response.status_code
+    return None
+
+
+def _retry_after_seconds(exc: BaseException) -> float | None:
+    response = None
+    if isinstance(exc, GarthHTTPError):
+        response = exc.error.response
+    elif isinstance(exc, requests.HTTPError):
+        response = exc.response
+
+    if response is None:
+        return None
+
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is None:
+        return None
+
+    try:
+        return max(0.0, float(retry_after))
+    except ValueError:
+        return None
+
+
+def _garmin_credentials_available() -> bool:
+    return bool(os.getenv("GARMIN_EMAIL") and os.getenv("GARMIN_PASSWORD"))
+
+
+def _clear_garmin_session_state() -> None:
+    garth.client.oauth1_token = None
+    garth.client.oauth2_token = None
+    garth.client._user_profile = None
+
+
+def _resume_garmin_session_from_env() -> bool:
+    garth_token = os.getenv("GARTH_TOKEN")
+    if garth_token:
+        garth.client.loads(garth_token)
+        print("Garmin session resumed from GARTH_TOKEN.")
+        return True
+
+    oauth1 = os.getenv("GARTH_OAUTH1_TOKEN_JSON")
+    oauth2 = os.getenv("GARTH_OAUTH2_TOKEN_JSON")
+    if not oauth1 or not oauth2:
+        return False
+
+    with tempfile.TemporaryDirectory(prefix="garth-session-") as temp_dir:
+        session_dir = Path(temp_dir)
+        (session_dir / "oauth1_token.json").write_text(oauth1, encoding="utf-8")
+        (session_dir / "oauth2_token.json").write_text(oauth2, encoding="utf-8")
+        garth.resume(str(session_dir))
+    print("Garmin session resumed from GARTH_OAUTH*_TOKEN_JSON secrets.")
+    return True
+
+
+def _login_garmin_with_credentials() -> None:
+    garmin_email = _required_env("GARMIN_EMAIL")
+    garmin_password = _required_env("GARMIN_PASSWORD")
+    garth.login(garmin_email, garmin_password)
+    print(
+        "Garmin login used username/password. "
+        "For unattended runs, set GARTH_TOKEN or GARTH_OAUTH1_TOKEN_JSON and GARTH_OAUTH2_TOKEN_JSON."
+    )
+
+
+def _restore_garmin_session(*, prefer_saved_session: bool = True) -> None:
+    _clear_garmin_session_state()
+
+    if prefer_saved_session and _resume_garmin_session_from_env():
+        return
+    if _garmin_credentials_available():
+        _login_garmin_with_credentials()
+        return
+    if not prefer_saved_session and _resume_garmin_session_from_env():
+        return
+
+    raise RuntimeError(
+        "Unable to restore Garmin session. "
+        "Set GARTH_TOKEN or GARTH_OAUTH*_TOKEN_JSON, or provide GARMIN_EMAIL and GARMIN_PASSWORD."
+    )
+
+
+def _is_garmin_retryable_auth_error(exc: BaseException) -> bool:
+    status_code = _status_code_from_exception(exc)
+    if status_code in {401, 403, 429}:
+        return True
+    if isinstance(exc, AssertionError):
+        return "OAuth1 token is required" in str(exc)
+    if isinstance(exc, GarthException):
+        return "OAuth1 token is required" in str(exc)
+    return False
+
+
+def _with_garmin_reauth_retry(action_name: str, func: Callable[[], T]) -> T:
+    attempts = max(1, _env_int("GARMIN_RETRY_ATTEMPTS", 3))
+    base_delay = max(0.0, _env_float("GARMIN_RETRY_BACKOFF_SECONDS", 20.0))
+    max_delay = max(base_delay, _env_float("GARMIN_RETRY_MAX_BACKOFF_SECONDS", 120.0))
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return func()
+        except (AssertionError, HTTPError, GarthHTTPError) as exc:
+            if not _is_garmin_retryable_auth_error(exc) or attempt >= attempts:
+                raise
+
+            status_code = _status_code_from_exception(exc)
+            prefer_saved_session = attempt == 1 or status_code == 429
+            backoff_seconds = _retry_after_seconds(exc)
+            if backoff_seconds is None:
+                backoff_seconds = min(max_delay, base_delay * (2 ** (attempt - 1)))
+
+            print(
+                f"Garmin {action_name} failed with "
+                f"{status_code if status_code is not None else type(exc).__name__} "
+                f"(attempt {attempt}/{attempts}). "
+                f"Retrying in {backoff_seconds:.1f}s."
+            )
+            time.sleep(backoff_seconds)
+            _restore_garmin_session(prefer_saved_session=prefer_saved_session)
+
+    raise RuntimeError(f"Garmin retry loop exhausted unexpectedly during {action_name}")
+
+
 def upload_weight_to_garmin(entry: WeightEntry) -> None:
     if FitEncoderWeight is not None:
         upload_body_composition_fit_to_garmin(entry)
@@ -196,7 +344,10 @@ def upload_weight_to_garmin(entry: WeightEntry) -> None:
     }
     # garth's HTTP client expects subdomain+path for low-level methods.
     # Use connectapi helper, which sets auth and target host correctly.
-    garth.client.connectapi("/weight-service/user-weight", method="POST", json=payload)
+    _with_garmin_reauth_retry(
+        "weight upload",
+        lambda: garth.client.connectapi("/weight-service/user-weight", method="POST", json=payload),
+    )
 
 
 def upload_body_composition_fit_to_garmin(entry: WeightEntry) -> None:
@@ -220,39 +371,19 @@ def upload_body_composition_fit_to_garmin(entry: WeightEntry) -> None:
     encoder.finish()
 
     fit_bytes = encoder.getvalue()
-    file_obj = io.BytesIO(fit_bytes)
-    file_obj.name = "body_composition.fit"  # used by garth.client.upload
-    result = garth.client.upload(file_obj)
+
+    def _upload_fit() -> object:
+        file_obj = io.BytesIO(fit_bytes)
+        file_obj.name = "body_composition.fit"  # used by garth.client.upload
+        return garth.client.upload(file_obj)
+
+    result = _with_garmin_reauth_retry("FIT upload", _upload_fit)
     if isinstance(result, dict) and result.get("detailedImportResult", {}).get("failures"):
         raise RuntimeError(f"Garmin FIT import reported failures: {result['detailedImportResult']['failures']}")
 
 
-def _resume_garmin_session_from_env() -> bool:
-    oauth1 = os.getenv("GARTH_OAUTH1_TOKEN_JSON")
-    oauth2 = os.getenv("GARTH_OAUTH2_TOKEN_JSON")
-    if not oauth1 or not oauth2:
-        return False
-
-    with tempfile.TemporaryDirectory(prefix="garth-session-") as temp_dir:
-        session_dir = Path(temp_dir)
-        (session_dir / "oauth1_token.json").write_text(oauth1, encoding="utf-8")
-        (session_dir / "oauth2_token.json").write_text(oauth2, encoding="utf-8")
-        garth.resume(str(session_dir))
-    print("Garmin session resumed from GARTH_OAUTH*_TOKEN_JSON secrets.")
-    return True
-
-
 def login_garmin() -> None:
-    if _resume_garmin_session_from_env():
-        return
-
-    garmin_email = _required_env("GARMIN_EMAIL")
-    garmin_password = _required_env("GARMIN_PASSWORD")
-    garth.login(garmin_email, garmin_password)
-    print(
-        "Garmin login used username/password. "
-        "For unattended runs, set GARTH_OAUTH1_TOKEN_JSON and GARTH_OAUTH2_TOKEN_JSON."
-    )
+    _restore_garmin_session(prefer_saved_session=True)
 
 
 def main() -> int:
@@ -300,11 +431,7 @@ def main() -> int:
             uploaded += 1
             print(f"Uploaded: {entry.timestamp_local.isoformat()} -> {entry.kilograms:.3f} kg")
         except (HTTPError, GarthHTTPError) as exc:
-            status_code = None
-            if isinstance(exc, GarthHTTPError) and exc.error.response is not None:
-                status_code = exc.error.response.status_code
-            elif isinstance(exc, requests.HTTPError) and exc.response is not None:
-                status_code = exc.response.status_code
+            status_code = _status_code_from_exception(exc)
 
             # Garmin may reject duplicate entries with 4xx. Keep sync idempotent.
             if status_code in {400, 409}:
