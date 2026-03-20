@@ -10,7 +10,7 @@ os.environ.setdefault("GARTH_TELEMETRY_ENABLED", "false")
 os.environ.setdefault("GARTH_TELEMETRY_SEND_TO_LOGFIRE", "false")
 
 import garth
-from garth.exc import GarthHTTPError
+from garth.exc import GarthException, GarthHTTPError
 
 
 def _env_float(name: str, default: float) -> float:
@@ -54,6 +54,12 @@ def _retry_after_seconds(exc: BaseException) -> float | None:
         return None
 
 
+def _clear_garmin_session_state() -> None:
+    garth.client.oauth1_token = None
+    garth.client.oauth2_token = None
+    garth.client._user_profile = None
+
+
 def _resume_garmin_session_from_env() -> bool:
     garth_token = os.getenv("GARTH_TOKEN")
     if garth_token:
@@ -73,6 +79,12 @@ def _resume_garmin_session_from_env() -> bool:
     garth.resume(str(out_dir))
     print("Garmin session resumed from GARTH_OAUTH*_TOKEN_JSON.")
     return True
+
+
+def _validate_garmin_session() -> None:
+    # Force garth to use/refresh OAuth2 now so bootstrap only emits
+    # tokens that are actually usable for Connect API calls.
+    garth.client.connectapi("/userprofile-service/socialProfile")
 
 
 def _login_with_retry(email: str, password: str) -> None:
@@ -105,11 +117,31 @@ def _login_with_retry(email: str, password: str) -> None:
 def main() -> int:
     out_dir = Path(os.getenv("GARTH_SESSION_DIR", ".garth"))
 
-    if not _resume_garmin_session_from_env():
+    resumed = _resume_garmin_session_from_env()
+    email = os.getenv("GARMIN_EMAIL")
+    password = os.getenv("GARMIN_PASSWORD")
+
+    if resumed:
+        print("Validating resumed Garmin session against Connect API.")
+        try:
+            _validate_garmin_session()
+        except (AssertionError, GarthException, GarthHTTPError) as exc:
+            if not (email and password):
+                print("Resumed Garmin session is not currently usable; it needs a fresh login.")
+                raise RuntimeError(f"Garmin session validation failed: {exc}") from exc
+
+            print("Resumed Garmin session is not currently usable; falling back to fresh Garmin login.")
+            _clear_garmin_session_state()
+            print("Logging into Garmin. If MFA is enabled, enter the code when prompted.")
+            _login_with_retry(email, password)
+            _validate_garmin_session()
+    else:
         email = _required_env("GARMIN_EMAIL")
         password = _required_env("GARMIN_PASSWORD")
         print("Logging into Garmin. If MFA is enabled, enter the code when prompted.")
         _login_with_retry(email, password)
+        _validate_garmin_session()
+
     garth.save(str(out_dir))
     print(f"Saved Garmin session files to {out_dir.resolve()}")
 
