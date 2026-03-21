@@ -167,13 +167,25 @@ If the job remains queued, the labels are usually the first thing to verify.
   
   root@Desktop:/mnt/c/Users/chris#
   ```
-5. Get GARTH_OAUTH1_TOKEN_JSON and GARTH_OAUTH2_TOKEN_JSON from Garmin, MFA is required once
+5. Get `GARTH_OAUTH1_TOKEN_JSON` and `GARTH_OAUTH2_TOKEN_JSON` from Garmin, MFA is required once
+- Preferred path: use `bootstrap_garth_session.py`
+- Fallback path if Garmin blocks the normal `garth` login flow: use `bootstrap_garmin_playwright.py` with a real browser session
 - I used powershell
 - ```powershell
   $env:GARMIN_EMAIL="you@example.com"
   $env:GARMIN_PASSWORD="your-garmin-password"
   python bootstrap_garth_session.py
   ```
+- Playwright fallback example:
+- ```bash
+  pip install playwright requests requests-oauthlib garth
+  python -m playwright install chromium
+  python bootstrap_garmin_playwright.py
+  ```
+- The Playwright fallback prints the same secret names used by this repo:
+  - `GARTH_OAUTH1_TOKEN_JSON`
+  - `GARTH_OAUTH2_TOKEN_JSON`
+  - `GARTH_TOKEN` when `garth` is available locally
 - result should look something like this:
 - ```powershell
   PS C:\Users\chris\Github\garminsync> docker run --rm -it --env-file .env garminsync python bootstrap_garth_session.py
