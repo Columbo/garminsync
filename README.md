@@ -34,6 +34,92 @@ Sync Withings body weight measurements to Garmin Connect from a GitHub Actions w
    - `REPO_SECRETS_TOKEN`
 4. Run the workflow on a self-hosted GitHub Actions runner.
 
+## Self-Hosted Runner On Proxmox
+
+The workflow in [sync.yml](/mnt/c/Users/chris/Github/garminsync/.github/workflows/sync.yml) uses:
+
+- `self-hosted`
+- `linux`
+- `x64`
+
+Your runner must advertise those labels or the job will stay queued.
+
+### Recommended approach
+
+Use a small Debian or Ubuntu VM on Proxmox. An LXC container can also work, but a VM is usually simpler for GitHub Actions runners because systemd, package management, and updates behave more predictably.
+
+### 1. Create the VM in Proxmox
+
+- Create a new VM with a current Debian or Ubuntu image.
+- Give it at least 1 vCPU, 2 GB RAM, and enough disk for Python, logs, and the checked out repository.
+- Make sure the VM has outbound internet access to GitHub, Garmin, and Withings.
+- Enable the QEMU guest agent if you normally use it in your Proxmox setup.
+
+### 2. Prepare the VM
+
+Update the VM and install the packages the runner and this project need:
+
+```bash
+sudo apt update
+sudo apt upgrade -y
+sudo apt install -y curl git jq ca-certificates python3 python3-venv python3-pip
+```
+
+Create a dedicated user for the runner:
+
+```bash
+sudo useradd -m -s /bin/bash actions
+sudo su - actions
+```
+
+### 3. Add a self-hosted runner in GitHub
+
+In this repository on GitHub:
+
+1. Open `Settings`.
+2. Open `Actions`.
+3. Open `Runners`.
+4. Click `New self-hosted runner`.
+5. Choose `Linux` and `x64`.
+
+GitHub will show you the current download URL and registration command for the runner. Run those commands inside the VM as the `actions` user.
+
+Typical example:
+
+```bash
+mkdir actions-runner && cd actions-runner
+curl -o actions-runner-linux-x64.tar.gz -L https://github.com/actions/runner/releases/download/vRUNNER_VERSION/actions-runner-linux-x64-vRUNNER_VERSION.tar.gz
+tar xzf actions-runner-linux-x64.tar.gz
+./config.sh --url https://github.com/YOUR_GITHUB_USER_OR_ORG/garminsync --token YOUR_REGISTRATION_TOKEN --labels self-hosted,linux,x64
+```
+
+Use the exact URL and registration token GitHub gives you at setup time.
+
+### 4. Install the runner as a service
+
+Still inside the runner directory:
+
+```bash
+sudo ./svc.sh install actions
+sudo ./svc.sh start
+```
+
+Verify the service is running:
+
+```bash
+sudo ./svc.sh status
+```
+
+Then check the repository's runner page in GitHub and confirm the runner shows as `Idle`.
+
+### 5. Connect it to this project
+
+- Keep the labels `self-hosted`, `linux`, and `x64` so they match the workflow.
+- Add the repository secrets described above.
+- Trigger the workflow manually once from GitHub Actions to confirm the runner picks up the job.
+
+If the job remains queued, the labels are usually the first thing to verify.
+
 ## Setup Details
 
 ### Prequirements:
