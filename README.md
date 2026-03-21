@@ -1,6 +1,6 @@
 # garminsync
 
-Sync Withings body weight measurements to Garmin Connect from a GitHub Actions workflow.
+Sync Withings body weight measurements to Garmin Connect from a GitHub Actions workflow running on a self-hosted runner.
 
 ## What this does
 
@@ -31,6 +31,8 @@ Sync Withings body weight measurements to Garmin Connect from a GitHub Actions w
    - `WITHINGS_CLIENT_SECRET`
    - `WITHINGS_ACCESS_TOKEN`
    - `WITHINGS_REFRESH_TOKEN`
+   - `REPO_SECRETS_TOKEN`
+4. Run the workflow on a self-hosted GitHub Actions runner.
 
 ## Setup Details
 
@@ -150,26 +152,27 @@ Sync Withings body weight measurements to Garmin Connect from a GitHub Actions w
 
 - This implementation syncs weight for the last 7 days by default.
 - If Garmin session secrets are missing, the script falls back to `GARMIN_EMAIL` and `GARMIN_PASSWORD` login.
-- GitHub Actions cannot persist refreshed Withings tokens unless you update secrets. For durable operation, rotate secrets with newly refreshed tokens periodically, or run this somewhere with persistent storage.
+- This project now only works reliably on a self-hosted GitHub Actions runner. Garmin appears to block the standard GitHub-hosted runners.
+- Automatic secret rotation is mandatory for GitHub Actions usage because refreshed Withings tokens must be written back to repository secrets after each rotation.
 
 ## Design Notes
 
 - The sync is built to run unattended from GitHub Actions, so authentication is based on reusable secrets rather than interactive login during scheduled runs.
-- Withings access tokens are refreshed at runtime to reduce manual maintenance, while the refreshed values can still be rotated back into GitHub secrets when needed.
+- Withings access tokens are refreshed at runtime and must be rotated back into GitHub repository secrets for unattended operation to continue working.
 - Garmin authentication is handled through reusable `garth` session tokens so MFA is only needed during the initial bootstrap step.
 - The sync is designed to stay idempotent: duplicate Garmin entries are skipped instead of failing the whole run.
 - Local runs and CI use the same environment variables so testing locally is close to the workflow behavior.
 - When multiple measurements exist on the same day, the script prefers the earliest entry that includes body-composition data and falls back to weight-only if needed.
 
-## Optional: Automatic Secret Rotation In GitHub Actions
+## Automatic Secret Rotation In GitHub Actions
 
-If you want GitHub Actions to automatically update rotated Withings tokens, create an additional repository secret named `REPO_SECRETS_TOKEN`.
+GitHub Actions must be able to automatically update rotated Withings tokens. Create an additional repository secret named `REPO_SECRETS_TOKEN`.
 
 ### What it is used for
 
 - The workflow can refresh `WITHINGS_ACCESS_TOKEN` and `WITHINGS_REFRESH_TOKEN` during a run.
 - GitHub Actions does not write those new values back to repository secrets automatically.
-- `REPO_SECRETS_TOKEN` is used by the workflow to call the GitHub API (via `gh secret set`) and update those repository secrets after a successful refresh.
+- `REPO_SECRETS_TOKEN` is required so the workflow can call the GitHub API (via `gh secret set`) and update those repository secrets after a successful refresh.
 
 ### How to create the token
 
